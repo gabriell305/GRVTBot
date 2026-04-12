@@ -53,6 +53,11 @@ export interface GridBot {
   safeguard_enabled?: number;
   safeguard_threshold_pct?: number;
   safeguard_action?: 'pause' | 'pause_close';
+  // F.1: per-bot alert threshold overrides. When null, notifier uses
+  // global defaults from env vars (NOTIFY_DRAWDOWN_PCT, etc.).
+  alert_drawdown_pct?: number | null;
+  alert_fill_batch?: number | null;
+  alert_liq_proximity_pct?: number | null;
 }
 
 export interface GridLevel {
@@ -325,6 +330,16 @@ export class GridBotDB {
       await this.dbRun(`ALTER TABLE grid_bots ADD COLUMN safeguard_action TEXT`);
       console.log('✅ Columna safeguard_action agregada a grid_bots');
     } catch (e) { /* already exists */ }
+
+    // F.1: per-bot alert threshold overrides. When null, the notifier
+    // uses the global defaults from env vars.
+    for (const col of [
+      'alert_drawdown_pct REAL',
+      'alert_fill_batch INTEGER',
+      'alert_liq_proximity_pct REAL',
+    ]) {
+      try { await this.dbRun(`ALTER TABLE grid_bots ADD COLUMN ${col}`); } catch (e) { /* exists */ }
+    }
 
     // Tabla: bot_cash_movements — explicit ledger for every cash flow
     // touching a bot's notional. Each row records WHY investment_usdt

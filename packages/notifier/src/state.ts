@@ -21,6 +21,18 @@ export interface NotifierState {
   lastErrorHash: string | null;
 }
 
+// F.6: alert history entry. Append-only log stored in alert-history.json
+// alongside cursor.json. The bot API reads this file to show alert
+// history in the dashboard.
+export interface AlertHistoryEntry {
+  ts: number;
+  type: string;
+  botId?: number;
+  pair?: string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
 const DEFAULT_STATE: NotifierState = {
   lastRoundtripId: 0,
   lastBotStatus: {},
@@ -31,10 +43,12 @@ const DEFAULT_STATE: NotifierState = {
 
 export class StateStore {
   private readonly filePath: string;
+  private readonly alertHistoryPath: string;
   private state: NotifierState;
 
   constructor(stateDir: string) {
     this.filePath = path.join(stateDir, 'cursor.json');
+    this.alertHistoryPath = path.join(stateDir, 'alert-history.json');
     this.state = this.load();
   }
 
@@ -67,5 +81,43 @@ export class StateStore {
     const tmp = `${this.filePath}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(this.state, null, 2));
     fs.renameSync(tmp, this.filePath);
+  }
+
+  /**
+   * F.6: Append an alert to the history log. The file is a JSON array
+   * capped at 500 entries (oldest pruned on write). The bot API reads
+   * this file to show alert history in the dashboard.
+   */
+  appendAlert(entry: AlertHistoryEntry): void {
+    try {
+      let history: AlertHistoryEntry[] = [];
+      if (fs.existsSync(this.alertHistoryPath)) {
+        const raw = fs.readFileSync(this.alertHistoryPath, 'utf8');
+        history = JSON.parse(raw);
+      }
+      history.push(entry);
+      // Cap at 500 entries
+      if (history.length > 500) {
+        history = history.slice(history.length - 500);
+      }
+      const tmp = `${this.alertHistoryPath}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(history));
+      fs.renameSync(tmp, this.alertHistoryPath);
+    } catch (err) {
+      log.error({ err: (err as Error).message }, 'failed to append alert history');
+    }
+  }
+
+  /**
+   * F.6: Read alert history (used by the bot API endpoint).
+   */
+  getAlertHistory(): AlertHistoryEntry[] {
+    try {
+      if (!fs.existsSync(this.alertHistoryPath)) return [];
+      const raw = fs.readFileSync(this.alertHistoryPath, 'utf8');
+      return JSON.parse(raw);
+    } catch {
+      return [];
+    }
   }
 }

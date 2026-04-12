@@ -89,6 +89,30 @@ export function statusChangeTemplate(
 /**
  * Daily summary — sent at DAILY_SUMMARY_HOUR_UTC.
  */
+/**
+ * F.2: Liquidation proximity alert — mark price is dangerously close
+ * to the estimated liquidation price.
+ */
+export function liqProximityTemplate(
+  bot: BotRow,
+  markPrice: number,
+  liqPrice: number,
+  distancePct: number
+): string {
+  const emoji = distancePct < 5 ? '🚨🚨' : '⚠️';
+  return [
+    `${emoji} *Liquidation proximity — Bot ${bot.id}* (${bot.pair})`,
+    '',
+    `Mark:   \`${fmtUsd(markPrice)}\``,
+    `Liq:    \`${fmtUsd(liqPrice)}\``,
+    `Distance: \`${distancePct.toFixed(1)}%\``,
+    '',
+    distancePct < 5
+      ? '‼️ *CRITICAL* — consider pausing or closing this bot immediately.'
+      : 'Monitor closely. The bot will auto-pause if safeguard is enabled.',
+  ].join('\n');
+}
+
 export function dailySummaryTemplate(
   bot: BotRow,
   snapshot: DailySnapshotRow | undefined,

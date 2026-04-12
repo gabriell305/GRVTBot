@@ -17,11 +17,19 @@ export interface BotRow {
   id: number;
   pair: string;
   status: 'running' | 'paused' | 'stopped' | 'error';
+  direction: 'long' | 'short';
+  leverage: number;
   investment_usdt: number;
   total_pnl_usdt: number;
   grid_profit_usdt: number;
   trend_pnl_usdt: number;
+  avg_entry_price: number;
+  liquidation_price: number;
   last_error?: string | null;
+  // F.1: per-bot alert config (nullable — uses global defaults when null)
+  alert_drawdown_pct?: number | null;
+  alert_fill_batch?: number | null;
+  alert_liq_proximity_pct?: number | null;
 }
 
 export interface RoundtripRow {
@@ -75,10 +83,28 @@ export class NotifierDb {
    */
   getAllBots(): Promise<BotRow[]> {
     return this.all<BotRow>(
-      `SELECT id, pair, status, investment_usdt,
-              total_pnl_usdt, grid_profit_usdt, trend_pnl_usdt
+      `SELECT id, pair, status, direction, leverage, investment_usdt,
+              total_pnl_usdt, grid_profit_usdt, trend_pnl_usdt,
+              avg_entry_price, liquidation_price,
+              alert_drawdown_pct, alert_fill_batch, alert_liq_proximity_pct
        FROM grid_bots`
     );
+  }
+
+  /**
+   * F.2: Get the latest fill price for a bot's instrument as a proxy
+   * for mark price. The notifier is read-only on the DB and has no
+   * GRVT API access, so the last fill is the best we have.
+   */
+  async getLastFillPrice(botId: number): Promise<number | null> {
+    const row = await this.get<{ price: number }>(
+      `SELECT price FROM fills_archive
+       WHERE bot_id = ?
+       ORDER BY event_time DESC
+       LIMIT 1`,
+      [botId]
+    );
+    return row?.price ?? null;
   }
 
   /**

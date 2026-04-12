@@ -68,6 +68,7 @@ The dashboard is functional but missing some design-doc features and UX polish.
 | E.6 | **Grid activity heatmap** — fill density per level per time bucket (design doc §6.5, optional P1) | Nice-to-have for power users, shows which levels earn the most |
 | E.7 | **Global error toast for network failures** — catch fetch errors globally, show reconnecting state | Currently individual query errors; no global "offline" banner |
 | E.8 | **Range picker drag handles** — wizard step 2 range selection with chart drag (design doc §7.3) | Current implementation is numeric inputs; design shows drag-on-chart UX |
+| E.9 | **Password recovery flow** — "Forgot password" link on login, email-based reset token | No way to recover access if password is lost; currently requires server CLI access |
 
 ---
 

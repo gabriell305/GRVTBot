@@ -1706,6 +1706,31 @@ export function createV2Router(deps: V2RouterDeps): Router {
     return;
   }));
 
+  // ── GET /api/v2/alerts ─────────────────────────────────────────────
+  // F.6: Read the notifier's alert history file. The notifier writes
+  // this as a JSON array in its state directory; we read it from the
+  // shared data path. Returns newest-first, with optional ?limit.
+  router.get('/alerts', asyncHandler(async (req, res) => {
+    const limit = Math.min(parseInt(String(req.query.limit ?? '100'), 10) || 100, 500);
+    try {
+      const fs = await import('node:fs');
+      const stateDir = process.env.NOTIFIER_STATE_DIR ?? '/var/lib/grvt-grid-notifier';
+      const historyPath = `${stateDir}/alert-history.json`;
+      if (!fs.existsSync(historyPath)) {
+        res.json({ alerts: [] });
+        return;
+      }
+      const raw = fs.readFileSync(historyPath, 'utf8');
+      const all = JSON.parse(raw) as unknown[];
+      const recent = all.slice(-limit).reverse(); // newest first
+      res.json({ alerts: recent });
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'alert history read failed');
+      res.json({ alerts: [], degraded: true });
+    }
+    return;
+  }));
+
   // ── GET /api/v2/health ────────────────────────────────────────────
   // C.6: real health check — verifies DB read + GRVT API reachability.
   // Returns ok / degraded / down with per-component latency. Docker

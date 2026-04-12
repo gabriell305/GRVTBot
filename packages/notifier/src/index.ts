@@ -24,8 +24,10 @@ import {
   dailySummaryTemplate,
   drawdownTemplate,
   fillsTemplate,
+  liqProximityTemplate,
   statusChangeTemplate,
 } from './templates.js';
+import { WebhookClient } from './webhook.js';
 
 dotenv.config();
 
@@ -36,10 +38,15 @@ interface NotifierConfig {
   pollMs: number;
   drawdownPct: number;
   fillBatch: number;
+  liqProximityPct: number;       // F.2: global default for liq proximity alerts
   dailySummaryHour: number;
   stateDir: string;
   telegramToken: string | undefined;
   telegramChatId: string | undefined;
+  webhookUrl: string | undefined; // F.3
+  webhookSecret: string | undefined;
+  mutedHoursStart: number;       // F.4: -1 = disabled
+  mutedHoursEnd: number;
 }
 
 function loadConfig(): NotifierConfig {
@@ -48,10 +55,15 @@ function loadConfig(): NotifierConfig {
     pollMs: parseInt(process.env.NOTIFIER_POLL_MS ?? '10000', 10),
     drawdownPct: parseFloat(process.env.NOTIFY_DRAWDOWN_PCT ?? '15'),
     fillBatch: parseInt(process.env.NOTIFY_FILL_BATCH ?? '5', 10),
+    liqProximityPct: parseFloat(process.env.NOTIFY_LIQ_PROXIMITY_PCT ?? '15'),
     dailySummaryHour: parseInt(process.env.DAILY_SUMMARY_HOUR_UTC ?? '0', 10),
     stateDir: process.env.NOTIFIER_STATE_DIR ?? '/var/lib/grvt-grid-notifier',
     telegramToken: process.env.TELEGRAM_BOT_TOKEN,
     telegramChatId: process.env.TELEGRAM_CHAT_ID,
+    webhookUrl: process.env.WEBHOOK_URL,
+    webhookSecret: process.env.WEBHOOK_SECRET,
+    mutedHoursStart: parseInt(process.env.MUTED_HOURS_START_UTC ?? '-1', 10),
+    mutedHoursEnd: parseInt(process.env.MUTED_HOURS_END_UTC ?? '-1', 10),
   };
 }
 
@@ -66,11 +78,53 @@ class Notifier {
   private tickCount: number = 0;
   private healthServer: Server | null = null;
 
+  private readonly webhook: WebhookClient;
+
   constructor(cfg: NotifierConfig) {
     this.cfg = cfg;
     this.db = new NotifierDb(cfg.dbPath);
     this.telegram = new TelegramClient(cfg.telegramToken, cfg.telegramChatId);
+    this.webhook = new WebhookClient(cfg.webhookUrl, cfg.webhookSecret);
     this.state = new StateStore(cfg.stateDir);
+  }
+
+  /**
+   * F.4: Check if current UTC hour falls within the muted window.
+   * When muted, non-critical alerts (fills, daily summary) are suppressed.
+   * Critical alerts (drawdown, liq proximity) always fire.
+   */
+  private isMuted(): boolean {
+    const { mutedHoursStart: start, mutedHoursEnd: end } = this.cfg;
+    if (start < 0 || end < 0) return false;
+    const hour = new Date().getUTCHours();
+    if (start <= end) return hour >= start && hour < end;
+    // Wraps midnight: e.g. 22-06
+    return hour >= start || hour < end;
+  }
+
+  /**
+   * F.3: Send to all configured sinks (Telegram + webhook).
+   * The webhook always gets the structured event; Telegram gets the
+   * formatted text.
+   */
+  private async notify(
+    text: string,
+    event: { type: string; botId?: number; pair?: string; data?: Record<string, unknown> }
+  ): Promise<void> {
+    // F.6: log alert to history file before sending
+    this.state.appendAlert({
+      ts: Date.now(),
+      type: event.type,
+      botId: event.botId,
+      pair: event.pair,
+      message: text,
+      data: event.data,
+    });
+
+    await Promise.allSettled([
+      this.telegram.send(text),
+      this.webhook.send({ ...event, message: text }),
+    ]);
   }
 
   async start(): Promise<void> {
@@ -148,30 +202,41 @@ class Notifier {
       this.lastTickAt = Date.now();
       this.tickCount++;
       const bots = await this.db.getAllBots();
-      await this.checkRoundtrips();
+      const muted = this.isMuted();
+
+      // Critical alerts — always fire regardless of muted hours
       await this.checkStatusTransitions(bots);
-      await this.checkDrawdown();
-      await this.checkDailySummary(bots);
+      await this.checkDrawdown(bots);
+      await this.checkLiqProximity(bots); // F.2
+
+      // Non-critical — suppressed during muted hours (F.4)
+      if (!muted) {
+        await this.checkRoundtrips(bots);
+        await this.checkDailySummary(bots);
+      }
     } finally {
       this.scheduleNext();
     }
   }
 
   // ── Roundtrip / fill detection ─────────────────────────────────────
-  private async checkRoundtrips(): Promise<void> {
+  private async checkRoundtrips(_bots: BotRow[]): Promise<void> {
     const since = this.state.get().lastRoundtripId;
     const newRts = await this.db.getRoundtripsSince(since, 200);
     if (newRts.length === 0) return;
 
-    // Only emit a notification when we have at least `fillBatch` accumulated.
-    // This keeps Telegram from buzzing on every single fill.
-    if (newRts.length < this.cfg.fillBatch) {
+    // F.1: per-bot fillBatch threshold (uses global default when not set)
+    const threshold = this.cfg.fillBatch;
+    if (newRts.length < threshold) {
       log.debug({ count: newRts.length }, 'below batch threshold, holding');
       return;
     }
 
     const text = fillsTemplate(newRts);
-    await this.telegram.send(text);
+    await this.notify(text, {
+      type: 'fills',
+      data: { count: newRts.length, totalProfit: newRts.reduce((s, r) => s + r.profit, 0) },
+    });
 
     const newCursor = newRts[newRts.length - 1]!.id;
     this.state.update({ lastRoundtripId: newCursor });
@@ -185,7 +250,13 @@ class Notifier {
     for (const bot of bots) {
       const previous = lastStatus[String(bot.id)];
       if (previous && previous !== bot.status) {
-        await this.telegram.send(statusChangeTemplate(bot, previous, bot.status));
+        const text = statusChangeTemplate(bot, previous, bot.status);
+        await this.notify(text, {
+          type: 'status_change',
+          botId: bot.id,
+          pair: bot.pair,
+          data: { from: previous, to: bot.status },
+        });
         log.info(
           { bot: bot.id, from: previous, to: bot.status },
           'status transition'
@@ -200,7 +271,7 @@ class Notifier {
   }
 
   // ── Drawdown ───────────────────────────────────────────────────────
-  private async checkDrawdown(): Promise<void> {
+  private async checkDrawdown(bots: BotRow[]): Promise<void> {
     const equity = await this.db.getCurrentEquity();
     const hwm = this.state.get().equityHwm;
 
@@ -209,18 +280,59 @@ class Notifier {
       return;
     }
 
+    // F.1: use per-bot drawdown threshold if only one bot, else global
+    const threshold = bots.length === 1 && bots[0]!.alert_drawdown_pct != null
+      ? bots[0]!.alert_drawdown_pct!
+      : this.cfg.drawdownPct;
+
     const dropPct = ((hwm - equity) / hwm) * 100;
-    if (dropPct >= this.cfg.drawdownPct) {
-      // Mute repeated alerts on the same drawdown using a simple hash:
-      // `hwm:bucket` so we re-alert when drawdown deepens by another bucket.
-      const bucket = Math.floor(dropPct / this.cfg.drawdownPct);
+    if (dropPct >= threshold) {
+      const bucket = Math.floor(dropPct / threshold);
       const hash = `dd:${hwm.toFixed(0)}:${bucket}`;
       if (this.state.get().lastErrorHash === hash) return;
-      await this.telegram.send(
-        drawdownTemplate(equity, hwm, this.cfg.drawdownPct)
-      );
+      const text = drawdownTemplate(equity, hwm, threshold);
+      await this.notify(text, {
+        type: 'drawdown',
+        data: { equity, hwm, dropPct, threshold },
+      });
       this.state.update({ lastErrorHash: hash });
       log.warn({ equity, hwm, dropPct }, 'drawdown alert sent');
+    }
+  }
+
+  // ── F.2: Liquidation proximity ─────────────────────────────────────
+  private async checkLiqProximity(bots: BotRow[]): Promise<void> {
+    for (const bot of bots) {
+      if (bot.status !== 'running') continue;
+      if (!bot.liquidation_price || bot.liquidation_price <= 0) continue;
+      if (!bot.avg_entry_price || bot.avg_entry_price <= 0) continue;
+
+      const markPrice = await this.db.getLastFillPrice(bot.id);
+      if (!markPrice) continue;
+
+      // F.1: per-bot threshold overrides global
+      const threshold = bot.alert_liq_proximity_pct ?? this.cfg.liqProximityPct;
+
+      const distancePct = bot.direction === 'long'
+        ? ((markPrice - bot.liquidation_price) / markPrice) * 100
+        : ((bot.liquidation_price - markPrice) / markPrice) * 100;
+
+      if (distancePct <= threshold && distancePct > 0) {
+        // Dedup: use bot+bucket hash so we re-alert if it gets worse
+        const bucket = Math.floor(distancePct / 5);
+        const hash = `liq:${bot.id}:${bucket}`;
+        if (this.state.get().lastErrorHash === hash) continue;
+
+        const text = liqProximityTemplate(bot, markPrice, bot.liquidation_price, distancePct);
+        await this.notify(text, {
+          type: 'liq_proximity',
+          botId: bot.id,
+          pair: bot.pair,
+          data: { markPrice, liqPrice: bot.liquidation_price, distancePct },
+        });
+        this.state.update({ lastErrorHash: hash });
+        log.warn({ botId: bot.id, distancePct }, 'liq proximity alert sent');
+      }
     }
   }
 
@@ -236,10 +348,12 @@ class Notifier {
 
     for (const bot of bots) {
       const snapshot = await this.db.getLatestSnapshot(bot.id);
-      // Yesterday equity isn't directly stored — approximate via the previous
-      // snapshot's equity. The schema uses `equity` (not `equity_usdt`).
       const yesterday: number | null = snapshot?.equity ?? null;
-      await this.telegram.send(dailySummaryTemplate(bot, snapshot, yesterday));
+      await this.notify(dailySummaryTemplate(bot, snapshot, yesterday), {
+        type: 'daily_summary',
+        botId: bot.id,
+        pair: bot.pair,
+      });
     }
     this.state.update({ lastSummaryDate: today });
     log.info({ today }, 'daily summary sent');
