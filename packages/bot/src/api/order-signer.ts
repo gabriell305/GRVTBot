@@ -7,6 +7,16 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Gate every per-order log behind DEBUG_SIGN=1. With 39 bots placing
+// orders constantly, the un-gated console.log dump (~25 lines per
+// signature + full EIP-712 JSON twice) was the dominant log-volume
+// source — ~50 GB/day projected, filling /var/log inside 24h and
+// taking grvtbot.com to 502 (2026-06-05, 2026-06-07).
+const debugSign = process.env.DEBUG_SIGN === '1';
+const dlog = (...args: unknown[]): void => {
+  if (debugSign) console.log(...args);
+};
+
 // EIP-712 Domain para GRVT Exchange
 const EIP712_DOMAIN = {
   name: 'GRVT Exchange',
@@ -235,21 +245,21 @@ export async function signOrder(
     message: orderMessage,
   };
 
-  console.log('🔏 Firmando orden EIP-712:');
-  console.log(`  Instrumento: ${instrument} (assetID: ${assetID})`);
-  console.log(`  Lado: ${side} (isBuyingContract: ${isBuyingContract})`);
-  console.log(`  Tipo: ${isMarket ? 'MARKET' : 'LIMIT'}`);
-  console.log(`  Size: ${size} → contractSize: ${contractSize}`);
-  console.log(`  Price: ${price || 'N/A'} → limitPrice: ${limitPrice}`);
-  console.log(`  TimeInForce: ${timeInForce} (${timeInForce === 1 ? 'GTC' : timeInForce === 3 ? 'IOC' : 'OTHER'})`);
-  console.log(`  Nonce: ${nonce}`);
-  console.log(`  Expiration: ${expiration}`);
-  
-  console.log('\n📋 EIP-712 message completo:');
-  console.log(JSON.stringify(orderMessage, null, 2));
-  
-  console.log('\n🏢 EIP-712 domain:');
-  console.log(JSON.stringify(EIP712_DOMAIN, null, 2));
+  dlog('🔏 Firmando orden EIP-712:');
+  dlog(`  Instrumento: ${instrument} (assetID: ${assetID})`);
+  dlog(`  Lado: ${side} (isBuyingContract: ${isBuyingContract})`);
+  dlog(`  Tipo: ${isMarket ? 'MARKET' : 'LIMIT'}`);
+  dlog(`  Size: ${size} → contractSize: ${contractSize}`);
+  dlog(`  Price: ${price || 'N/A'} → limitPrice: ${limitPrice}`);
+  dlog(`  TimeInForce: ${timeInForce} (${timeInForce === 1 ? 'GTC' : timeInForce === 3 ? 'IOC' : 'OTHER'})`);
+  dlog(`  Nonce: ${nonce}`);
+  dlog(`  Expiration: ${expiration}`);
+
+  dlog('\n📋 EIP-712 message completo:');
+  dlog(JSON.stringify(orderMessage, null, 2));
+
+  dlog('\n🏢 EIP-712 domain:');
+  dlog(JSON.stringify(EIP712_DOMAIN, null, 2));
 
   try {
     // Firmar usando @metamask/eth-sig-util
@@ -259,16 +269,16 @@ export async function signOrder(
       version: SignTypedDataVersion.V4,
     });
 
-    console.log(`  Signature: ${signature}`);
+    dlog(`  Signature: ${signature}`);
 
     // Decodificar signature en r, s, v
     const r = '0x' + signature.slice(2, 66);
     const s = '0x' + signature.slice(66, 130);
     const v = parseInt(signature.slice(130, 132), 16);
 
-    console.log(`  r: ${r}`);
-    console.log(`  s: ${s}`);
-    console.log(`  v: ${v}`);
+    dlog(`  r: ${r}`);
+    dlog(`  s: ${s}`);
+    dlog(`  v: ${v}`);
 
     // Retornar orden firmada
     const signedOrder: SignedOrder = {
@@ -283,7 +293,7 @@ export async function signOrder(
       },
     };
 
-    console.log('✅ Orden firmada exitosamente');
+    dlog('✅ Orden firmada exitosamente');
     return signedOrder;
 
   } catch (error) {
@@ -347,8 +357,8 @@ export function formatSignedOrderForAPI(signedOrder: SignedOrder, instrument: st
     },
   };
   
-  console.log('📦 Request JSON que se enviará a GRVT (/full/v1/create_order):');
-  console.log(JSON.stringify(orderRequest, null, 2));
+  dlog('📦 Request JSON que se enviará a GRVT (/full/v1/create_order):');
+  dlog(JSON.stringify(orderRequest, null, 2));
   
   return orderRequest;
 }

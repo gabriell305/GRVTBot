@@ -2601,8 +2601,8 @@ export class GridBotInstance {
    * ⚠️ ACTUALIZADO: usar nuevo createOrder con validación min_notional
    */
   async placeGridOrder(level: GridLevel): Promise<void> {
-    log.info(`📝 [DEBUG] placeGridOrder() INICIADO - Bot: ${this.bot.id}, Level: ${level.level_index}`);
-    log.info(`📝 [DEBUG] placeGridOrder() - Orden: ${level.side} ${level.quantity} ${this.bot.pair} @ $${level.price}`);
+    log.debug(`placeGridOrder INICIADO - Bot: ${this.bot.id}, Level: ${level.level_index}`);
+    log.debug(`placeGridOrder - Orden: ${level.side} ${level.quantity} ${this.bot.pair} @ $${level.price}`);
 
     // Record placement time for GRVT-lag guard in monitor. Set BEFORE the
     // async GRVT call so even if the call itself takes a while, subsequent
@@ -2619,7 +2619,7 @@ export class GridBotInstance {
         return;
       }
 
-      log.info(`✅ [DEBUG] Min_notional OK: $${notional.toFixed(2)} >= $${minNotional}`);
+      log.debug(`Min_notional OK: $${notional.toFixed(2)} >= $${minNotional}`);
 
       // 🧪 DRY RUN MODE: Solo loguear las órdenes que se colocarían
       if (process.env.DRY_RUN === 'true') {
@@ -2659,7 +2659,7 @@ export class GridBotInstance {
       }
 
       // 💰 MODO REAL: Colocar orden en GRVT usando nuevo formato
-      log.info(`💰 [DEBUG] REAL MODE - Enviando orden a GRVT con nuevo createOrder...`);
+      log.debug(`REAL MODE - Enviando orden a GRVT con nuevo createOrder...`);
       
       const order = await this.grvt.createOrder({
         sub_account_id: process.env.GRVT_TRADING_ACCOUNT_ID!,
@@ -2726,8 +2726,21 @@ export class GridBotInstance {
       log.info(`📝 ✅ Orden creada: ${level.side} ${level.quantity} ${this.bot.pair} @ $${level.price} (ID: ${realOrderId}) [notional: $${notional.toFixed(2)}]`);
 
     } catch (error) {
-      log.error({ err: (error as Error).message }, `❌ [DEBUG] Error colocando orden en nivel ${level.level_index}:`);
-      log.error({ stack: error instanceof Error ? error.stack : String(error) }, 'Error stack');
+      // Spam guard: "Insufficient margin" (GRVT code 2080) is the
+      // dominant log volume on accounts running underwater positions.
+      // Each retry was logging the full error message + a separate
+      // duplicate line carrying the stack trace. On 2026-06-07 this
+      // single hot path produced ~2.75 GB/day, filling /var/log and
+      // taking grvtbot.com to 502. Now: log once, no stack for known
+      // user-recoverable errors. Pino's err serializer already
+      // includes the stack for unknown errors.
+      const msg = (error as Error).message ?? String(error);
+      const isKnown = /code":2080|Insufficient margin|min_notional|MIN_SIZE/i.test(msg);
+      if (isKnown) {
+        log.warn({ botId: this.bot.id, level: level.level_index, err: msg }, 'placeGridOrder rejected by GRVT');
+      } else {
+        log.error({ err: error, botId: this.bot.id, level: level.level_index }, 'placeGridOrder failed');
+      }
       
       // ⚠️ NUEVO: Capturar error 7201 específicamente
       if (error instanceof Error && error.message.includes('7201')) {

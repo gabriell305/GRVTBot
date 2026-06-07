@@ -148,7 +148,9 @@ class RateLimiter {
         const waitTime = this.timeWindow - (now - oldestRequest) + 50; // +50ms safety
         
         if (waitTime > 0) {
-          console.log(`⏳ Rate limit: esperando ${waitTime}ms`);
+          if (process.env.DEBUG_SIGN === '1') {
+            console.log(`⏳ Rate limit: esperando ${waitTime}ms`);
+          }
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
@@ -454,8 +456,10 @@ export class GRVTClient {
     // SAFEGUARD: Validar min_size y min_notional
     this.validateOrderSize(request.instrument, request.size, request.price!);
 
-    console.log(`📝 Creando orden: ${request.side} ${request.size} ${request.instrument} @ ${request.price}`);
-    
+    if (process.env.DEBUG_SIGN === '1') {
+      console.log(`📝 Creando orden: ${request.side} ${request.size} ${request.instrument} @ ${request.price}`);
+    }
+
     try {
       // Firmar orden con EIP-712 — pass per-instance signing creds
       // so multi-tenant clients each sign with their own private key.
@@ -481,12 +485,12 @@ export class GRVTClient {
         request.side
       );
 
-      console.log('🔏 Orden firmada, enviando a GRVT...');
-      
       // ⚠️ CAMBIO: endpoint /full/v1/create_order
       const data = await this.authedRequest(`${TRADING_URL}/create_order`, orderData);
-      
-      console.log('✅ Respuesta GRVT createOrder:', data);
+
+      if (process.env.DEBUG_SIGN === '1') {
+        console.log('✅ Respuesta GRVT createOrder:', data);
+      }
       
       // ⚠️ CAMBIO: respuesta contiene order_id en result
       // Extraer client_order_id del request enviado para tracking
