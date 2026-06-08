@@ -231,6 +231,46 @@ function asyncHandler(fn: AsyncHandler) {
   };
 }
 
+// ─── Lifecycle error helper ─────────────────────────────────────────────
+// Bot lifecycle endpoints (start / pause / close / range) bubble errors
+// from the engine — most of them surface as raw text in the dashboard's
+// toast. The dominant user-facing case is "GRVT login failed for user N":
+// the user's credentials worked at signup but the GRVT API key was later
+// rotated/revoked on grvt.io and never re-saved here. Surface that as a
+// structured 422 with code `grvt_credentials_invalid` so the dashboard
+// can show a friendly message + a button that links to Settings, and
+// also flip `grvt_credentials.last_test_ok = 0` so the user sees a
+// persistent warning until they re-validate.
+function respondLifecycleError(
+  res: Response,
+  err: unknown,
+  defaultErrorCode: string,
+  gridBotDb: GridBotDB,
+  userId: number,
+): void {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/GRVT login failed/i.test(message)) {
+    // Mark stale so the dashboard surfaces a warning. Fire-and-forget —
+    // a DB blip on this side shouldn't block the response.
+    Promise.resolve(
+      gridBotDb.markGrvtCredentialsTestResult?.(userId, false, message),
+    ).catch((dbErr: unknown) => {
+      log.warn(
+        { userId, err: dbErr instanceof Error ? dbErr.message : String(dbErr) },
+        'failed to mark grvt_credentials.last_test_ok=0',
+      );
+    });
+    res.status(422).json({
+      error: 'grvt_credentials_invalid',
+      code: 'grvt_credentials_invalid',
+      userId,
+      message,
+    });
+    return;
+  }
+  res.status(500).json({ error: defaultErrorCode, message });
+}
+
 // ─── Rate limiters (H-6) ───────────────────────────────────────────────
 // Protect auth endpoints from credential-stuffing / brute-force / email-
 // bombing. Limits are deliberately generous so a single user fat-fingering
@@ -2054,10 +2094,7 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
       res.json({ id, status: 'running' });
     } catch (err) {
       log.error({ botId: id, err: (err as Error).message }, 'bot start failed');
-      res.status(500).json({
-        error: 'start_failed',
-        message: (err as Error).message,
-      });
+      respondLifecycleError(res, err, 'start_failed', gridBotDb, req.userId!);
     }
     return;
   }));
@@ -2078,10 +2115,7 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
       res.json({ id, status: 'paused' });
     } catch (err) {
       log.error({ botId: id, err: (err as Error).message }, 'bot pause failed');
-      res.status(500).json({
-        error: 'pause_failed',
-        message: (err as Error).message,
-      });
+      respondLifecycleError(res, err, 'pause_failed', gridBotDb, req.userId!);
     }
     return;
   }));
@@ -2106,10 +2140,7 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
       res.json({ id, status: 'stopped' });
     } catch (err) {
       log.error({ botId: id, err: (err as Error).message }, 'bot close failed');
-      res.status(500).json({
-        error: 'close_failed',
-        message: (err as Error).message,
-      });
+      respondLifecycleError(res, err, 'close_failed', gridBotDb, req.userId!);
     }
     return;
   }));
@@ -2238,10 +2269,7 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
         { botId: id, lowerPrice, upperPrice, err: (err as Error).message },
         'range preview failed'
       );
-      res.status(500).json({
-        error: 'preview_failed',
-        message: (err as Error).message,
-      });
+      respondLifecycleError(res, err, 'preview_failed', gridBotDb, req.userId!);
     }
     return;
   }));
@@ -2309,10 +2337,7 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
         { botId: id, lowerPrice, upperPrice, err: (err as Error).message },
         'bot range update failed'
       );
-      res.status(500).json({
-        error: 'range_update_failed',
-        message: (err as Error).message,
-      });
+      respondLifecycleError(res, err, 'range_update_failed', gridBotDb, req.userId!);
     }
     return;
   }));

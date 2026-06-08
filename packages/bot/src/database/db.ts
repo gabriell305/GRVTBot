@@ -1933,6 +1933,23 @@ export class GridBotDB {
     await this.dbRun(`DELETE FROM grvt_credentials WHERE user_id = ?`, [userId]);
   }
 
+  // Flip last_test_ok + record the live failure message. Called from
+  // lifecycle endpoints when the engine fails to log into GRVT with the
+  // user's stored credentials — surfaces a persistent warning in the
+  // dashboard until the user re-saves their keys.
+  async markGrvtCredentialsTestResult(
+    userId: number,
+    ok: boolean,
+    errorMessage?: string | null,
+  ): Promise<void> {
+    await this.dbRun(
+      `UPDATE grvt_credentials
+         SET last_test_ok = ?, last_test_at = ?, last_test_error = ?
+         WHERE user_id = ?`,
+      [ok ? 1 : 0, Date.now(), ok ? null : (errorMessage ?? null), userId],
+    );
+  }
+
   async touchGrvtCredentialsLastUsed(userId: number): Promise<void> {
     await this.dbRun(
       `UPDATE grvt_credentials SET last_used_at = ? WHERE user_id = ?`,

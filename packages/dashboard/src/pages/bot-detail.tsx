@@ -189,7 +189,16 @@ export function BotDetailPage() {
       // Rollback on failure
       if (ctx?.prevBot) queryClient.setQueryData(['bot', botId], ctx.prevBot);
       if (ctx?.prevBots) queryClient.setQueryData(['bots'], ctx.prevBots);
-      toast.error(t('botDetail.actionFailed', { msg: _err.message }));
+      // Special-case: GRVT credentials no longer work. The raw backend
+      // message ("GRVT login failed for user N") doesn't tell the user
+      // what to do. Show a translated message with explicit next step
+      // (re-save credentials in Settings) and keep it on screen longer.
+      const code = (_err as { payload?: { code?: string } }).payload?.code;
+      if (code === 'grvt_credentials_invalid') {
+        toast.error(t('botDetail.grvtCredsInvalid'), { duration: 8000 });
+      } else {
+        toast.error(t('botDetail.actionFailed', { msg: _err.message }));
+      }
     },
     onSettled() {
       // Always refetch after settled to get the real server state
