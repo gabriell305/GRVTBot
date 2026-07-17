@@ -198,26 +198,28 @@ export class GridBotDB {
   /**
    * Inicializar database: WAL mode + crear tablas
    */
-  async initialize(): Promise<void> {
+    async initialize(): Promise<void> {
     try {
       // Configurar WAL mode (Write-Ahead Logging)
-      await this.dbRun('PRAGMA journal_mode = WAL');
-      await this.dbRun('PRAGMA synchronous = NORMAL');
-      await this.dbRun('PRAGMA cache_size = 1000');
-      await this.dbRun('PRAGMA temp_store = MEMORY');
-      
+      await this.dbRun('PRAGMA journal_mode = WAL;');
+      await this.dbRun('PRAGMA synchronous = NORMAL;');
+      await this.dbRun('PRAGMA cache_size = 1000;');
+      await this.dbRun('PRAGMA temp_store = MEMORY;');
+
       console.log('⚡ SQLite en WAL mode');
 
       // Crear tablas
       await this.createTables();
-      
+
+      // --- AUTO-CREACIÓN DINÁMICA DE LA GRILLA ---
+      await this.seedDynamicBot();
+
       console.log('✅ Database inicializada');
-      
+
     } catch (error) {
       console.error('❌ Error inicializando database:', error);
       throw error;
     }
-  }
 
   /**
    * Crear todas las tablas
@@ -2154,7 +2156,47 @@ export class GridBotDB {
         }
       });
     });
+  private async seedDynamicBot(): Promise<void> {
+    try {
+      const existingBots = await this.dbAll('SELECT id FROM grid_bots LIMIT 1;');
+      if (existingBots && existingBots.length > 0) {
+        console.log('ℹ️ Ya existen bots en la base de datos. Saltando auto-creación.');
+        return;
+      }
+
+      const pair = process.env.GRID_SYMBOL || 'XRP-USDT-PERP';
+      const lower_price = parseFloat(process.env.GRID_LOWER_PRICE || '0.80');
+      const upper_price = parseFloat(process.env.GRID_UPPER_PRICE || '1.75');
+      const leverage = parseInt(process.env.GRID_LEVERAGE || '10');
+      const num_grids = parseInt(process.env.TOTAL_GRIDS || '120');
+      const orderSize = parseFloat(process.env.ORDER_SIZE_USD || '6');
+      
+      const investment_usdt = num_grids * orderSize;
+
+      console.log(`🤖 Base de datos vacía. Creando bot automático para ${pair}...`);
+
+      await this.dbRun(`
+        INSERT INTO grid_bots (
+          pair, direction, leverage, lower_price, upper_price, 
+          num_grids, investment_usdt, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+      `, [
+        pair,
+        'long',
+        leverage,
+        lower_price,
+        upper_price,
+        num_grids,
+        investment_usdt,
+        'running'
+      ]);
+
+      console.log(`✅ Bot dinámico para ${pair} creado y guardado en la base de datos.`);
+    } catch (err) {
+      console.error('❌ Error al intentar auto-crear el bot:', err);
+    }
   }
+
 }
 
 // Instancia singleton de la database
