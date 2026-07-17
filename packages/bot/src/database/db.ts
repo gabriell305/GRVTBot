@@ -220,7 +220,7 @@ export class GridBotDB {
       console.error('❌ Error inicializando database:', error);
       throw error;
     }
-
+  }
   /**
    * Crear todas las tablas
    */
@@ -2156,6 +2156,7 @@ export class GridBotDB {
         }
       });
     });
+  }
   private async seedDynamicBot(): Promise<void> {
     try {
       const existingBots = await this.dbAll('SELECT id FROM grid_bots LIMIT 1;');
