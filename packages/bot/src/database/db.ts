@@ -2189,7 +2189,7 @@ export class GridBotDB {
         upper_price,
         num_grids,
         investment_usdt,
-        'running'
+        'paused'
       ]);
 
       console.log(`✅ Bot dinámico para ${pair} creado y guardado en la base de datos.`);
