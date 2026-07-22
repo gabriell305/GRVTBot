@@ -212,37 +212,6 @@ if (process.env.DEBUG_REQ === '1') {
   });
 }
 
-// Health endpoint BEFORE auth (for external monitoring)
-app.get('/api/health', async (req, res) => {
-  try {
-    const uptimeMs = Math.round(process.uptime() * 1000);
-    const uptimeSeconds = Math.round(process.uptime());
-    const hours = Math.floor(uptimeSeconds / 3600);
-    const mins = Math.floor((uptimeSeconds % 3600) / 60);
-    const secs = uptimeSeconds % 60;
-    const uptimeHuman = `${hours}h ${mins}m ${secs}s`;
-    
-    const mem = process.memoryUsage();
-    
-    res.json({
-      status: 'ok',
-      uptime: uptimeSeconds,
-      uptimeHuman,
-      activeOrders: (gridEngine as any).activeOrders?.size || 0,
-      lastError: null,
-      memory: {
-        heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
-        heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
-        rss: Math.round(mem.rss / 1024 / 1024)
-      },
-      timestamp: new Date().toISOString(),
-      pid: process.pid
-    });
-  } catch (error) {
-    res.json({ status: 'error', error: String(error), pid: process.pid });
-  }
-});
-
 app.use(basicAuth);
 
 // === API ENDPOINTS ===
