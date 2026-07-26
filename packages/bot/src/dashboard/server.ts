@@ -1476,3 +1476,65 @@ app.get('/dashboard/*', (_req, res) => {
     res.status(404).send('Dashboard index.html no encontrado');
   }
 });
+
+// ── Garantizar carpeta de datos para SQLite y Servir SPA ────────────────
+if (!fs.existsSync('./data')) {
+  try {
+    fs.mkdirSync('./data', { recursive: true });
+  } catch (_e) {}
+}
+
+function getDashboardDistPath(): string {
+  const defaultDir: string = path.resolve(process.cwd(), 'packages/dashboard/dist');
+  const candidates: string[] = [
+    defaultDir,
+    path.resolve(process.cwd(), 'dashboard/dist'),
+    path.resolve(__dirname, '../../../dashboard/dist'),
+    path.resolve(__dirname, '../../dashboard/dist'),
+    path.resolve(__dirname, '../dashboard/dist'),
+  ];
+  for (let i = 0; i < candidates.length; i++) {
+    const folderPath = candidates[i];
+    if (folderPath && fs.existsSync(path.join(folderPath, 'index.html'))) {
+      return folderPath;
+    }
+  }
+  return defaultDir;
+}
+
+const dashboardBuildPath: string = getDashboardDistPath();
+
+// Redireccionar raíz a /dashboard/
+app.get('/', (_req, res) => {
+  res.redirect(301, '/dashboard/');
+});
+
+// Desactivar emergente de credenciales HTTP
+app.use('/dashboard', (_req, res, next) => {
+  res.removeHeader('WWW-Authenticate');
+  next();
+});
+
+// Servir archivos estáticos
+app.use('/dashboard', express.static(dashboardBuildPath, {
+  index: false,
+  maxAge: '1y',
+  immutable: true,
+  setHeaders: (res, filePath: string) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
+
+// Responder siempre index.html para rutas del frontend
+app.get('/dashboard/*', (_req, res) => {
+  res.removeHeader('WWW-Authenticate');
+  const distFolder: string = getDashboardDistPath();
+  const fileIndex: string = path.join(distFolder, 'index.html');
+  if (fs.existsSync(fileIndex)) {
+    res.sendFile(fileIndex);
+  } else {
+    res.status(404).send('Dashboard index.html no encontrado');
+  }
+});
