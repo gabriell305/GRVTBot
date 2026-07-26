@@ -1414,3 +1414,36 @@ async function startServer() {
 }
 
 startServer();
+
+// ── Servir SPA del Dashboard ──────────────────────────────────────
+const dashboardBuildPath = path.resolve(__dirname, '../../dashboard/dist');
+
+// Redirect raíz → /dashboard/
+app.get('/', (_req, res) => {
+  res.redirect(301, '/dashboard/');
+});
+
+// Archivos estáticos del build de Vite
+app.use('/dashboard', express.static(dashboardBuildPath, {
+  index: false,
+  maxAge: '1y',
+  immutable: true,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
+
+// SPA catch-all: todas las rutas /dashboard/* que no existen como
+// archivo estático, se sirven con index.html para React Router
+app.get('/dashboard/*', (_req, res) => {
+  const indexPath = path.join(dashboardBuildPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).json({
+      error: 'Dashboard no compilado. Ejecuta: npm run build --workspace=@grvt-grid/dashboard',
+    });
+  }
+});
