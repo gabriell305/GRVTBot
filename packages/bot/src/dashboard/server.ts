@@ -1415,24 +1415,26 @@ async function startServer() {
 
 startServer();
 
-// ── Servir SPA del Dashboard (Ruta inteligente + sin popup de login) ──
-function getDashboardDistPath() {
-  const candidates = [
-    path.resolve(process.cwd(), 'packages/dashboard/dist'),
+// ── Servir SPA del Dashboard (100% TypeScript Strict Safe) ─────────────
+function getDashboardDistPath(): string {
+  const defaultDir: string = path.resolve(process.cwd(), 'packages/dashboard/dist');
+  const candidates: string[] = [
+    defaultDir,
     path.resolve(process.cwd(), 'dashboard/dist'),
     path.resolve(__dirname, '../../../dashboard/dist'),
     path.resolve(__dirname, '../../dashboard/dist'),
     path.resolve(__dirname, '../dashboard/dist'),
   ];
-  for (const p of candidates) {
-    if (fs.existsSync(path.join(p, 'index.html'))) {
-      return p;
+  for (let i = 0; i < candidates.length; i++) {
+    const folderPath = candidates[i];
+    if (folderPath && fs.existsSync(path.join(folderPath, 'index.html'))) {
+      return folderPath;
     }
   }
-  return candidates[0];
+  return defaultDir;
 }
 
-const dashboardBuildPath = getDashboardDistPath();
+const dashboardBuildPath: string = getDashboardDistPath();
 
 // Redireccionar raíz a /dashboard/
 app.get('/', (_req, res) => {
@@ -1450,7 +1452,7 @@ app.use('/dashboard', express.static(dashboardBuildPath, {
   index: false,
   maxAge: '1y',
   immutable: true,
-  setHeaders: (res, filePath) => {
+  setHeaders: (res, filePath: string) => {
     if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache');
     }
@@ -1460,11 +1462,11 @@ app.use('/dashboard', express.static(dashboardBuildPath, {
 // Responder siempre index.html para rutas del frontend
 app.get('/dashboard/*', (_req, res) => {
   res.removeHeader('WWW-Authenticate');
-  const distFolder = getDashboardDistPath();
-  const fileIndex = path.join(distFolder, 'index.html');
+  const distFolder: string = getDashboardDistPath();
+  const fileIndex: string = path.join(distFolder, 'index.html');
   if (fs.existsSync(fileIndex)) {
     res.sendFile(fileIndex);
   } else {
-    res.status(404).send('Dashboard index.html no encontrado en: ' + fileIndex);
+    res.status(404).send('Dashboard index.html no encontrado');
   }
 });
