@@ -1415,15 +1415,37 @@ async function startServer() {
 
 startServer();
 
-// ── Servir SPA del Dashboard ──────────────────────────────────────
-const dashboardBuildPath = path.resolve(__dirname, '../../dashboard/dist');
+// ── Servir SPA del Dashboard (Ruta inteligente + sin popup de login) ──
+function getDashboardDistPath() {
+  const candidates = [
+    path.resolve(process.cwd(), 'packages/dashboard/dist'),
+    path.resolve(process.cwd(), 'dashboard/dist'),
+    path.resolve(__dirname, '../../../dashboard/dist'),
+    path.resolve(__dirname, '../../dashboard/dist'),
+    path.resolve(__dirname, '../dashboard/dist'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(path.join(p, 'index.html'))) {
+      return p;
+    }
+  }
+  return candidates[0];
+}
 
-// Redirect raíz → /dashboard/
+const dashboardBuildPath = getDashboardDistPath();
+
+// Redireccionar raíz a /dashboard/
 app.get('/', (_req, res) => {
   res.redirect(301, '/dashboard/');
 });
 
-// Archivos estáticos del build de Vite
+// Desactivar emergente de credenciales HTTP
+app.use('/dashboard', (_req, res, next) => {
+  res.removeHeader('WWW-Authenticate');
+  next();
+});
+
+// Servir archivos estáticos del panel
 app.use('/dashboard', express.static(dashboardBuildPath, {
   index: false,
   maxAge: '1y',
@@ -1435,15 +1457,14 @@ app.use('/dashboard', express.static(dashboardBuildPath, {
   },
 }));
 
-// SPA catch-all: todas las rutas /dashboard/* que no existen como
-// archivo estático, se sirven con index.html para React Router
+// Responder siempre index.html para rutas del frontend
 app.get('/dashboard/*', (_req, res) => {
-  const indexPath = path.join(dashboardBuildPath, 'index.html');
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
+  res.removeHeader('WWW-Authenticate');
+  const distFolder = getDashboardDistPath();
+  const fileIndex = path.join(distFolder, 'index.html');
+  if (fs.existsSync(fileIndex)) {
+    res.sendFile(fileIndex);
   } else {
-    res.status(404).json({
-      error: 'Dashboard no compilado. Ejecuta: npm run build --workspace=@grvt-grid/dashboard',
-    });
+    res.status(404).send('Dashboard index.html no encontrado en: ' + fileIndex);
   }
 });
