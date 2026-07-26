@@ -26,7 +26,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.DASHBOARD_PORT || 3848;
+const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3848;
 
 // SECURITY (H-6 follow-up): the bot sits behind a reverse proxy (Caddy
 // in Docker on this VPS). Without `trust proxy`, every user's req.ip
@@ -1415,7 +1415,13 @@ async function startServer() {
 
 startServer();
 
-// ── Servir SPA del Dashboard (100% TypeScript Strict Safe) ─────────────
+// ── Garantizar carpeta de datos para SQLite y Servir SPA ────────────────
+if (!fs.existsSync('./data')) {
+  try {
+    fs.mkdirSync('./data', { recursive: true });
+  } catch (_e) {}
+}
+
 function getDashboardDistPath(): string {
   const defaultDir: string = path.resolve(process.cwd(), 'packages/dashboard/dist');
   const candidates: string[] = [
@@ -1447,7 +1453,7 @@ app.use('/dashboard', (_req, res, next) => {
   next();
 });
 
-// Servir archivos estáticos del panel
+// Servir archivos estáticos
 app.use('/dashboard', express.static(dashboardBuildPath, {
   index: false,
   maxAge: '1y',
