@@ -223,23 +223,18 @@ app.use(basicAuth);
 if (!fs.existsSync('./data')) {
   try { fs.mkdirSync('./data', { recursive: true }); } catch (_e) {}
 }
+if (!fs.existsSync('./data')) {
+  try { fs.mkdirSync('./data', { recursive: true }); } catch (_) {}
+}
 
-// Eliminar popup de autenticacion HTTP
-app.use('/dashboard', (_req, res, next) => {
-  res.removeHeader('WWW-Authenticate');
-  next();
-});
-
-// Busqueda segura del build del dashboard para Render
 function getDashboardDistPath(): string {
   const base: string = path.resolve(process.cwd(), 'dashboard-dist');
-  const cwdFallback: string = path.resolve(process.cwd(), 'packages/dashboard/dist');
   const candidates: string[] = [
     base,
-    cwdFallback,
+    path.resolve(process.cwd(), 'packages/dashboard/dist'),
     path.resolve(__dirname, '../../../../dashboard/dist'),
     path.resolve(__dirname, '../../../dashboard/dist'),
-    path.resolve(__dirname, '../../dashboard/dist'),
+    path.resolve(__dirname, '../../dashboard/dist')
   ];
   for (let i = 0; i < candidates.length; i++) {
     const p = candidates[i];
@@ -252,12 +247,15 @@ function getDashboardDistPath(): string {
 
 const dashboardBuildPath: string = getDashboardDistPath();
 
-// Raiz a /dashboard/
 app.get('/', (_req, res) => {
   res.redirect(301, '/dashboard/');
 });
 
-// Archivos estaticos
+app.use('/dashboard', (_req, res, next) => {
+  res.removeHeader('WWW-Authenticate');
+  next();
+});
+
 app.use('/dashboard', express.static(dashboardBuildPath, {
   index: false,
   maxAge: '1y',
@@ -266,17 +264,15 @@ app.use('/dashboard', express.static(dashboardBuildPath, {
     if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache');
     }
-  },
+  }
 }));
 
-// SPA catch-all compatible con Express 4 (sin PathError)
-app.get('/dashboard/:pathMatch(.*)*', (_req, res) => {
+app.use('/dashboard', (_req, res) => {
   res.removeHeader('WWW-Authenticate');
-  const distFolder: string = getDashboardDistPath();
-  const indexPath: string = path.join(distFolder, 'index.html');
+  const indexPath: string = path.join(dashboardBuildPath, 'index.html');
   if (fs.existsSync(indexPath)) {
     res.sendFile(indexPath);
   } else {
-    res.status(404).send('Dashboard index.html no encontrado en: ' + indexPath);
+    res.status(404).send('Dashboard index.html no encontrado');
   }
 });
