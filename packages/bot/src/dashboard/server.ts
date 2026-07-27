@@ -26,7 +26,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3848;
+const PORT = Number(process.env.PORT) || Number(process.env.DASHBOARD_PORT) || 3848;
 
 // SECURITY (H-6 follow-up): the bot sits behind a reverse proxy (Caddy
 // in Docker on this VPS). Without `trust proxy`, every user's req.ip
