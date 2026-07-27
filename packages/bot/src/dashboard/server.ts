@@ -215,70 +215,11 @@ if (process.env.DEBUG_REQ === '1') {
 app.use(basicAuth);
 
 // === API ENDPOINTS ===
-
-// ⚠️ NOTA: Archivos estáticos se configuran DESPUÉS de los endpoints API
-// ── Parche definitivo dashboard Render (sin duplicados) ───────────
-
-// Asegurar ruta de datos SQLite
-if (!fs.existsSync('./data')) {
-  try { fs.mkdirSync('./data', { recursive: true }); } catch (_e) {}
-}
-if (!fs.existsSync('./data')) {
-  try { fs.mkdirSync('./data', { recursive: true }); } catch (_) {}
-}
-if (!fs.existsSync('./data')) {
-  try { fs.mkdirSync('./data', { recursive: true }); } catch (_) {}
-}
 if (!fs.existsSync('./data')) {
   try { fs.mkdirSync('./data', { recursive: true }); } catch (_) {}
 }
 
-function getDashboardDistPath(): string {
-  const base: string = path.resolve(process.cwd(), 'dashboard-dist');
-  const candidates: string[] = [
-    base,
-    path.resolve(process.cwd(), 'packages/dashboard/dist'),
-    path.resolve(__dirname, '../../../../dashboard/dist'),
-    path.resolve(__dirname, '../../../dashboard/dist'),
-    path.resolve(__dirname, '../../dashboard/dist')
-  ];
-  for (let i = 0; i < candidates.length; i++) {
-    const p = candidates[i];
-    if (p && fs.existsSync(path.join(p, 'index.html'))) {
-      return p;
-    }
-  }
-  return base;
-}
-
-const dashboardBuildPath: string = getDashboardDistPath();
-
-app.get('/', (_req, res) => {
-  res.redirect(301, '/dashboard/');
-});
-
-app.use('/dashboard', (_req, res, next) => {
+app.use((_req, res, next) => {
   res.removeHeader('WWW-Authenticate');
   next();
-});
-
-app.use('/dashboard', express.static(dashboardBuildPath, {
-  index: false,
-  maxAge: '1y',
-  immutable: true,
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache');
-    }
-  }
-}));
-
-app.use('/dashboard', (_req, res) => {
-  res.removeHeader('WWW-Authenticate');
-  const indexPath: string = path.join(dashboardBuildPath, 'index.html');
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    res.status(404).send('Dashboard index.html no encontrado');
-  }
 });
