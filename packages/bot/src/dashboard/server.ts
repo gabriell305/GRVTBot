@@ -226,6 +226,9 @@ if (!fs.existsSync('./data')) {
 if (!fs.existsSync('./data')) {
   try { fs.mkdirSync('./data', { recursive: true }); } catch (_) {}
 }
+if (!fs.existsSync('./data')) {
+  try { fs.mkdirSync('./data', { recursive: true }); } catch (_) {}
+}
 
 function getDashboardDistPath(): string {
   const base: string = path.resolve(process.cwd(), 'dashboard-dist');
