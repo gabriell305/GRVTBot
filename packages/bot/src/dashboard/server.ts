@@ -223,3 +223,11 @@ app.use((_req, res, next) => {
   res.removeHeader('WWW-Authenticate');
   next();
 });
+if (!fs.existsSync('./data')) {
+  try { fs.mkdirSync('./data', { recursive: true }); } catch (_) {}
+}
+
+app.use((_req, res, next) => {
+  res.removeHeader('WWW-Authenticate');
+  next();
+});
