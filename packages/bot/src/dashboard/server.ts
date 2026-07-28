@@ -250,7 +250,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 // === HEALTH CHECK (antes de auth para que Render lo detecte) ===
-app.get('/', (req, res) => {
+app.get('/healthz', (req, res) => {
   res.status(200).send('OK');
 });
 
@@ -1141,6 +1141,7 @@ app.get('/legacy', (req, res) => {
 // this is a no-op so the bot still boots without the new dashboard.
 const dashV2Candidates = [
   process.env.DASHBOARD_V2_DIST,
+  '/opt/render/project/src/dashboard-dist',
   '/opt/grvt-grid-bot/dashboard-dist',
   path.join(__dirname, '..', '..', 'dashboard-dist'),
 ].filter((p): p is string => !!p);
