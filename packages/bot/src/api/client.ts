@@ -15,9 +15,23 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Endpoints GRVT verificados por Marta
-const MARKET_DATA_URL = 'https://market-data.grvt.io/full/v1';
-const TRADING_URL = 'https://trades.grvt.io/full/v1';
+// Endpoints GRVT verificados por Marta — switchean automáticamente según GRVT_ENV
+function getBaseUrls() {
+  const isTestnet = process.env.GRVT_ENV === 'testnet';
+  return {
+    MARKET_DATA_URL: isTestnet
+      ? 'https://market-data.testnet.grvt.io/full/v1'
+      : 'https://market-data.grvt.io/full/v1',
+    TRADING_URL: isTestnet
+      ? 'https://trades.testnet.grvt.io/full/v1'
+      : 'https://trades.grvt.io/full/v1',
+    EDGE_URL: isTestnet
+      ? 'https://edge.testnet.grvt.io'
+      : 'https://edge.grvt.io',
+  };
+}
+
+export const { MARKET_DATA_URL, TRADING_URL, EDGE_URL } = getBaseUrls();
 
 // Tipos para las respuestas de la API
 export interface Balance {

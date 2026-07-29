@@ -7,6 +7,7 @@ import http from 'http';
 import https from 'https';
 import dotenv from 'dotenv';
 import { Agent, fetch as undiciFetch } from 'undici';
+import { EDGE_URL } from './client.js';
 
 dotenv.config();
 
@@ -62,7 +63,7 @@ export async function authenticateGRVT(): Promise<boolean> {
     }
 
     // Login request con IPv4 agent
-    const response = await fetchIPv4('https://edge.grvt.io/auth/api_key/login', {
+    const response = await fetchIPv4(`${EDGE_URL}/auth/api_key/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
