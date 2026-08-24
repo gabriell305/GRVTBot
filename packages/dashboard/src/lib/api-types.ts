@@ -265,15 +265,22 @@ export interface FundingRow {
 
 export interface ValidateBotInput {
   pair: string;
-  direction: 'long' | 'short';
+  direction: 'long' | 'short' | 'neutral';
   lower_price: number;
   upper_price: number;
   num_grids: number;
   investment_usdt: number;
   leverage: number;
-  // H.8: Virtual grids
-  virtual_enabled?: boolean;
-  active_window_size?: number;
+  // Interés Compuesto (Auto-Compounding)
+  compound_enabled?: boolean;
+  compound_pct?: number;
+  // Capa 1: Grillas Reales (1-100)
+  // Capa 2: Grilla Virtual Cobertura
+  virtual_cover_enabled?: boolean;
+  virtual_cover_grids?: number;
+  // Capa 3: Grilla Virtual Macro
+  virtual_macro_enabled?: boolean;
+  virtual_macro_grids?: number;
   // H.5: optional sub-account routing. Null/missing = default creds.
   grvt_sub_account_id?: number | null;
 }

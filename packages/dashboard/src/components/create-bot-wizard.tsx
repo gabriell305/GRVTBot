@@ -53,14 +53,15 @@ interface CreateBotWizardProps {
 
 interface WizardState {
   pair: string;
-  direction: 'long' | 'short';
-  lower: string; // strings while user types
+  direction: 'long' | 'short' | 'neutral';
+  lower: string;
   upper: string;
-  grids: string;
-  investment: string;
-  leverage: string;
+  grids: string; // Capa 1: Grillas reales (1-100)
+  investment: string; // Capital total en USD
+  leverage: string; // 1x-20x
   acceptedRisk: boolean;
-  compoundPct: string;
+  compoundEnabled: boolean; // Toggle Interés Compuesto ON/OFF
+  compoundPct: string; // Porcentaje de auto-compounding
   safeguardEnabled: boolean;
   safeguardThresholdPct: string;
   safeguardAction: 'pause' | 'pause_close';
@@ -68,9 +69,12 @@ interface WizardState {
   tpPct: string;
   autoShiftEnabled: boolean;
   autoShiftPct: string;
-  virtualEnabled: boolean;
+  // Capas virtuales (0-100 cada una)
+  virtualCoverEnabled: boolean; // Capa 2: Cobertura de volatilidad
+  virtualCoverGrids: string;
+  virtualMacroEnabled: boolean; // Capa 3: Rango amplio
+  virtualMacroGrids: string;
   activeWindowSize: string;
-  // H.5: '' = use default credentials. Otherwise = sub-account row id (as string for <select>).
   subAccountId: string;
 }
 
@@ -83,6 +87,7 @@ const INITIAL_STATE: WizardState = {
   investment: '',
   leverage: '',
   acceptedRisk: false,
+  compoundEnabled: false,
   compoundPct: '0',
   safeguardEnabled: false,
   safeguardThresholdPct: '10',
@@ -91,7 +96,10 @@ const INITIAL_STATE: WizardState = {
   tpPct: '',
   autoShiftEnabled: false,
   autoShiftPct: '10',
-  virtualEnabled: false,
+  virtualCoverEnabled: false,
+  virtualCoverGrids: '0',
+  virtualMacroEnabled: false,
+  virtualMacroGrids: '0',
   activeWindowSize: '70',
   subAccountId: '',
 };
@@ -191,7 +199,9 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
 
   function handleCreate() {
     if (!validated) return;
-    const compoundPct = Math.min(100, Math.max(0, parseInt(state.compoundPct || '0', 10)));
+    const compoundPct = state.compoundEnabled
+      ? Math.min(100, Math.max(0, parseInt(state.compoundPct || '0', 10)))
+      : 0;
     const safeguardPayload = state.safeguardEnabled
       ? {
           safeguard_enabled: true,
@@ -209,11 +219,17 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
     const autoShiftPayload = state.autoShiftEnabled
       ? { auto_shift_enabled: true, auto_shift_pct: parseFloat(state.autoShiftPct || '10') }
       : {};
-    // H.8: virtual grids
-    const virtualPayload = state.virtualEnabled
+    // Capas Virtuales (Capa 2 y Capa 3)
+    const virtualCoverPayload = state.virtualCoverEnabled
       ? {
-          virtual_enabled: true,
-          active_window_size: Math.min(80, Math.max(20, parseInt(state.activeWindowSize || '70', 10))),
+          virtual_cover_enabled: true,
+          virtual_cover_grids: Math.min(100, Math.max(0, parseInt(state.virtualCoverGrids || '0', 10))),
+        }
+      : {};
+    const virtualMacroPayload = state.virtualMacroEnabled
+      ? {
+          virtual_macro_enabled: true,
+          virtual_macro_grids: Math.min(100, Math.max(0, parseInt(state.virtualMacroGrids || '0', 10))),
         }
       : {};
     // H.5: thread the picked sub-account through to POST /bots. Empty
@@ -234,7 +250,8 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
       ...(slPct > 0 ? { sl_pct: slPct } : {}),
       ...(tpPct > 0 ? { tp_pct: tpPct } : {}),
       ...autoShiftPayload,
-      ...virtualPayload,
+      ...virtualCoverPayload,
+      ...virtualMacroPayload,
       ...subAccountPayload,
     } as any);
   }
@@ -272,10 +289,21 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
         num_grids: parseInt(state.grids, 10),
         investment_usdt: parseFloat(state.investment),
         leverage: parseInt(state.leverage, 10),
-        ...(state.virtualEnabled
+        ...(state.compoundEnabled
           ? {
-              virtual_enabled: true,
-              active_window_size: parseInt(state.activeWindowSize || '70', 10),
+              compound_pct: Math.min(100, Math.max(0, parseInt(state.compoundPct || '0', 10))),
+            }
+          : {}),
+        ...(state.virtualCoverEnabled
+          ? {
+              virtual_cover_enabled: true,
+              virtual_cover_grids: Math.min(100, Math.max(0, parseInt(state.virtualCoverGrids || '0', 10))),
+            }
+          : {}),
+        ...(state.virtualMacroEnabled
+          ? {
+              virtual_macro_enabled: true,
+              virtual_macro_grids: Math.min(100, Math.max(0, parseInt(state.virtualMacroGrids || '0', 10))),
             }
           : {}),
       } as ValidateBotInput;
@@ -299,14 +327,7 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
       const inv = parseFloat(state.investment);
       const grids = parseInt(state.grids, 10);
       const lev = parseInt(state.leverage, 10);
-      const maxGrids = state.virtualEnabled ? 500 : 95;
-      const windowOk =
-        !state.virtualEnabled ||
-        (() => {
-          const w = parseInt(state.activeWindowSize || '0', 10);
-          return w >= 20 && w <= 80;
-        })();
-      return inv > 0 && grids >= 2 && grids <= maxGrids && lev >= 1 && lev <= 50 && windowOk;
+      return inv > 0 && grids >= 1 && grids <= 100 && lev >= 1 && lev <= 20;
     }
     if (step === 3) return state.acceptedRisk;
     return false;
@@ -633,7 +654,7 @@ function StepConfig({
           inputMode="numeric"
           value={state.leverage}
           onChange={(e) => update('leverage', e.target.value)}
-          helper="1x – 50x"
+          helper="1x – 20x"
         />
         <Input
           label={t('wizard.gridCount')}
@@ -641,50 +662,147 @@ function StepConfig({
           inputMode="numeric"
           value={state.grids}
           onChange={(e) => update('grids', e.target.value)}
-          helper={state.virtualEnabled ? '2 – 500 (virtual)' : '2 – 95'}
+          helper="1 – 100 (Capa 1: Grillas Reales)"
         />
       </div>
 
-      {/* H.8: Virtual grids */}
+      {/* Selector de Dirección: LONG, SHORT, NEUTRAL */}
+      <div className="mt-4">
+        <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
+          {t('wizard.directionHeading')}
+        </h4>
+        <div className="flex gap-2">
+          {(['long', 'short', 'neutral'] as const).map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => update('direction', d)}
+              className={cn(
+                'flex-1 h-10 rounded-md border text-sm font-semibold uppercase tracking-wider',
+                state.direction === d
+                  ? d === 'long'
+                    ? 'border-success bg-success-soft text-success'
+                    : d === 'short'
+                    ? 'border-danger bg-danger-soft text-danger'
+                    : 'border-primary bg-primary-soft text-primary'
+                  : 'border-border-subtle text-text-muted hover:border-border-default'
+              )}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Toggle de Interés Compuesto (Auto-Compounding) */}
       <div className="mt-4 rounded-md border border-border-subtle bg-bg-muted/40 p-4">
         <label className="flex items-start gap-3 cursor-pointer">
           <input
             type="checkbox"
             className="mt-0.5 size-4 accent-primary"
-            checked={state.virtualEnabled}
-            onChange={(e) => update('virtualEnabled', e.target.checked)}
+            checked={state.compoundEnabled}
+            onChange={(e) => update('compoundEnabled', e.target.checked)}
           />
           <div className="flex-1">
             <div className="text-sm font-semibold text-text-primary">
-              {t('wizard.virtualToggle')}
+              {t('wizard.compoundToggle')}
             </div>
             <div className="text-xs text-text-muted mt-0.5">
-              {t('wizard.virtualDesc')}
+              {t('wizard.compoundDesc')}
             </div>
           </div>
         </label>
-        {state.virtualEnabled && (
-          <div className="mt-4 grid grid-cols-2 gap-4 pl-7">
+        {state.compoundEnabled && (
+          <div className="mt-3 pl-7">
             <Input
-              label={t('wizard.activeWindow')}
+              label={t('wizard.compoundPct')}
               numeric
               inputMode="numeric"
-              value={state.activeWindowSize}
-              onChange={(e) => update('activeWindowSize', e.target.value)}
-              helper="20 – 80 (default 70)"
+              value={state.compoundPct}
+              onChange={(e) => update('compoundPct', e.target.value)}
+              helper="0 = disabled, 100 = reinvert todo el beneficio"
             />
           </div>
         )}
       </div>
-      <div className="mt-4">
+
+      {/* Capa 1: Grilla Base / Real DEX (1-100) */}
+      <div className="mt-4 rounded-md border border-border-subtle bg-bg-muted/40 p-4">
+        <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+          {t('wizard.layer1Title')}
+        </h4>
         <Input
-          label={t('wizard.reinvestPct')}
+          label={t('wizard.realGrids')}
           numeric
           inputMode="numeric"
-          value={state.compoundPct}
-          onChange={(e) => update('compoundPct', e.target.value)}
-          helper="0 = disabled, 100 = reinvest all profit"
+          value={state.grids}
+          onChange={(e) => update('grids', e.target.value)}
+          helper="1 – 100 grillas reales en el orderbook"
         />
+      </div>
+
+      {/* Capa 2: Grilla Virtual Cobertura (0-100) */}
+      <div className="mt-4 rounded-md border border-border-subtle bg-bg-muted/40 p-4">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-4 accent-primary"
+            checked={state.virtualCoverEnabled}
+            onChange={(e) => update('virtualCoverEnabled', e.target.checked)}
+          />
+          <div className="flex-1">
+            <div className="text-sm font-semibold text-text-primary">
+              {t('wizard.layer2Title')}
+            </div>
+            <div className="text-xs text-text-muted mt-0.5">
+              {t('wizard.layer2Desc')}
+            </div>
+          </div>
+        </label>
+        {state.virtualCoverEnabled && (
+          <div className="mt-3 pl-7">
+            <Input
+              label={t('wizard.virtualCoverGrids')}
+              numeric
+              inputMode="numeric"
+              value={state.virtualCoverGrids}
+              onChange={(e) => update('virtualCoverGrids', e.target.value)}
+              helper="0 – 100 grillas virtuales de cobertura"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Capa 3: Grilla Virtual Macro (0-100) */}
+      <div className="mt-4 rounded-md border border-border-subtle bg-bg-muted/40 p-4">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-4 accent-primary"
+            checked={state.virtualMacroEnabled}
+            onChange={(e) => update('virtualMacroEnabled', e.target.checked)}
+          />
+          <div className="flex-1">
+            <div className="text-sm font-semibold text-text-primary">
+              {t('wizard.layer3Title')}
+            </div>
+            <div className="text-xs text-text-muted mt-0.5">
+              {t('wizard.layer3Desc')}
+            </div>
+          </div>
+        </label>
+        {state.virtualMacroEnabled && (
+          <div className="mt-3 pl-7">
+            <Input
+              label={t('wizard.virtualMacroGrids')}
+              numeric
+              inputMode="numeric"
+              value={state.virtualMacroGrids}
+              onChange={(e) => update('virtualMacroGrids', e.target.value)}
+              helper="0 – 100 grillas virtuales de rango amplio"
+            />
+          </div>
+        )}
       </div>
       <p className="mt-4 text-xs text-text-muted">
         {t('wizard.effectiveNotional')}{' '}
