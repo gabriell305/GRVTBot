@@ -20,7 +20,7 @@ export function ProtectedRoute({ children, requireGrvt = true }: Props) {
   if (!token) return <Navigate to="/login" replace />;
   if (!user) return <Navigate to="/login" replace />;
   if (requireGrvt && !user.hasGrvtCreds) {
-    return <Navigate to="/onboarding/grvt" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
