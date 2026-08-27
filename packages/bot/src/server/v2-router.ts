@@ -70,6 +70,10 @@ interface EngineOps {
     activeWindowSize?: number;
     // H.5: optional sub-account routing. NULL = use default creds.
     grvtSubAccountId?: number | null;
+    // Per-bot deployment network target (mainnet/testnet).
+    network?: 'mainnet' | 'testnet';
+    // Extra dashboard params to persist through params_json.
+    paramsJson?: Record<string, unknown>;
   }): Promise<number>;
   startBot(botId: number): Promise<void>;
   pauseBot(botId: number): Promise<void>;
@@ -1106,12 +1110,25 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
              last_compound_at, total_reinvested, original_investment_usdt,
              quantity_per_level,
              safeguard_enabled, safeguard_threshold_pct, safeguard_action,
-             grvt_sub_account_id
+             grvt_sub_account_id,
+             params_json, virtual_enabled, active_window_size
       FROM grid_bots
       WHERE COALESCE(user_id, 1) = ?
       ORDER BY created_at DESC
     `, [userId]);
-    res.json({ bots: rows });
+    // Derive a per-bot network badge from the stored params_json (default
+    // mainnet). Keeps the dashboard able to run Mainnet+Testnet bots in
+    // parallel without a schema change.
+    const bots = rows.map((r: any) => {
+      const { params_json, virtual_enabled, active_window_size, ...rest } = r;
+      let net: 'mainnet' | 'testnet' = 'mainnet';
+      try {
+        const p = params_json ? JSON.parse(params_json) : {};
+        net = p.network === 'testnet' ? 'testnet' : 'mainnet';
+      } catch { /* ignore malformed params */ }
+      return { ...rest, network: net };
+    });
+    res.json({ bots });
     return;
   }));
 
@@ -1122,7 +1139,13 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
     await requireBotOwnership(db, id, req.userId!);
     const bot = await dbGet(db, `SELECT * FROM grid_bots WHERE id = ?`, [id]);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
-    res.json({ bot });
+    const botRow = bot as any;
+    let network: 'mainnet' | 'testnet' = 'mainnet';
+    try {
+      const p = botRow.params_json ? JSON.parse(botRow.params_json) : {};
+      network = p.network === 'testnet' ? 'testnet' : 'mainnet';
+    } catch { /* ignore */ }
+    res.json({ bot: { ...bot, network } });
     return;
   }));
 
@@ -1877,6 +1900,10 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
       active_window_size: number;
       // H.5: optional sub-account routing. Null/missing = default creds.
       grvt_sub_account_id: number | null;
+      network: 'mainnet' | 'testnet';
+      virtual_mid_grids: number;
+      virtual_wide_grids: number;
+      virtual_macro_grids: number;
     }>;
 
     const errors: string[] = [];
@@ -1893,6 +1920,15 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
     const virtualEnabled = body.virtual_enabled === true;
     const activeWindowSize = Number(body.active_window_size);
     const maxGridsPost = virtualEnabled ? 500 : 95;
+
+    // Per-bot deployment network target (shown as badge; both can coexist).
+    const network = body.network === 'testnet' ? 'testnet' : 'mainnet';
+    // 3-layer virtual grid strategy counts (persist via params_json).
+    const virtualLayers = {
+      mid: Math.max(0, Math.floor(Number(body.virtual_mid_grids) || 0)),
+      wide: Math.max(0, Math.floor(Number(body.virtual_wide_grids) || 0)),
+      macro: Math.max(0, Math.floor(Number(body.virtual_macro_grids) || 0)),
+    };
 
     if (!Number.isFinite(lower) || lower <= 0) errors.push('lower_price must be > 0');
     if (!Number.isFinite(upper) || upper <= 0) errors.push('upper_price must be > 0');
@@ -1991,6 +2027,8 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
         virtualEnabled,
         activeWindowSize: virtualEnabled ? activeWindowSize : undefined,
         grvtSubAccountId,
+        network,
+        paramsJson: { virtual_layers: virtualLayers },
       });
       log.info({ botId, userId, pair, direction, leverage, grids }, 'bot created (paused)');
 
@@ -2349,7 +2387,7 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
   // round trip (default 0.05% = 5 bps maker on GRVT).
   interface BacktestBody {
     pair?: string;
-    direction?: 'long' | 'short';
+    direction?: 'long' | 'short' | 'neutral';
     leverage?: number;
     lower_price?: number;
     upper_price?: number;
@@ -2405,10 +2443,36 @@ Al hacer click en "Leí y acepto los términos de arriba" y crear una cuenta, co
       })).reverse(); // oldest first
 
       const { runBacktest } = await import('../bot/backtester.js');
+      // Neutral = flat observation (no grid). Return a flat equity curve over
+      // the same historical window so the chart still renders with constant
+      // equity and zero fees / trades.
+      if (direction === 'neutral') {
+        const equity = investment_usdt ?? 0;
+        const flatCurve = klines.map((k) => ({ time: k.openTime / 1000, equity }));
+        const flatStep = Math.max(1, Math.floor(flatCurve.length / 200));
+        const thinFlat: typeof flatCurve = [];
+        for (let i = 0; i < flatCurve.length; i += flatStep) thinFlat.push(flatCurve[i]!);
+        const lastFlat = flatCurve[flatCurve.length - 1];
+        if (lastFlat && thinFlat[thinFlat.length - 1] !== lastFlat) thinFlat.push(lastFlat);
+        res.json({
+          totalProfit: 0,
+          totalFees: 0,
+          netProfit: 0,
+          maxDrawdownPct: 0,
+          roundTrips: 0,
+          avgProfitPerTrip: 0,
+          equityCurve: thinFlat,
+          daysInMarket: 0,
+          profitFactor: 0,
+          candlesProcessed: klines.length,
+        });
+        return;
+      }
       const result = runBacktest(
         {
           pair: pair!,
-          direction: direction ?? 'long',
+          // Neutral is handled above; here direction is long|short (narrowed).
+          direction: (direction ?? 'long') as 'long' | 'short',
           leverage: leverage!,
           lowerPrice: lower_price!,
           upperPrice: upper_price!,

@@ -4,6 +4,13 @@
 
 export type BotStatus = 'running' | 'paused' | 'stopped' | 'error';
 
+// A selectable trading pair in the dashboard (value = GRVT instrument id,
+// label = display form).
+export interface PairOption {
+  value: string;
+  label: string;
+}
+
 export interface BotSummary {
   id: number;
   pair: string;
@@ -42,6 +49,8 @@ export interface BotSummary {
   active_window_size?: number | null;
   // H.5: optional sub-account this bot routes through. NULL = default creds.
   grvt_sub_account_id?: number | null;
+  // Deployment network for this bot. Defaults to mainnet.
+  network?: 'mainnet' | 'testnet';
 }
 
 export interface GridLevel {
@@ -216,7 +225,7 @@ export interface PortfolioEquityPoint {
 // simulation against historical GRVT candles — no orders placed.
 export interface BacktestInput {
   pair: string;
-  direction: 'long' | 'short';
+  direction: 'long' | 'short' | 'neutral';
   leverage: number;
   lower_price: number;
   upper_price: number;
@@ -275,14 +284,16 @@ export interface ValidateBotInput {
   compound_enabled?: boolean;
   compound_pct?: number;
   // Capa 1: Grillas Reales (1-100)
-  // Capa 2: Grilla Virtual Cobertura
-  virtual_cover_enabled?: boolean;
-  virtual_cover_grids?: number;
-  // Capa 3: Grilla Virtual Macro
-  virtual_macro_enabled?: boolean;
-  virtual_macro_grids?: number;
+  // Capas virtuales (0-100 cada una): estrategia de 3 capas de grillas.
+  virtual_enabled?: boolean;
+  active_window_size?: number;
+  virtual_mid_grids?: number;   // Grilla Virtual 1 (medio)
+  virtual_wide_grids?: number;  // Grilla Virtual 2 (amplio)
+  virtual_macro_grids?: number; // Grilla Virtual 3 (macro)
   // H.5: optional sub-account routing. Null/missing = default creds.
   grvt_sub_account_id?: number | null;
+  // Per-bot deployment network target (mainnet/testnet).
+  network?: 'mainnet' | 'testnet';
 }
 
 // H.5: GRVT sub-account row as the dashboard sees it (no encrypted fields).

@@ -52,6 +52,8 @@ interface EngineOps {
     investmentUSDT: number;
     virtualEnabled?: boolean;
     activeWindowSize?: number;
+    network?: 'mainnet' | 'testnet';
+    paramsJson?: Record<string, unknown>;
   }): Promise<number>;
   startBot(botId: number): Promise<void>;
   pauseBot(botId: number): Promise<void>;

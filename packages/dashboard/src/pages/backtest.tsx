@@ -25,7 +25,7 @@ import type {
 
 interface FormState {
   pair: string;
-  direction: 'long' | 'short';
+  direction: 'long' | 'short' | 'neutral';
   leverage: string;
   lower: string;
   upper: string;
@@ -129,7 +129,9 @@ export function BacktestPage() {
       state: {
         presetWizard: {
           pair: form.pair,
-          direction: form.direction,
+          // "Neutral" backtest = flat observation; the live grid bot must be
+          // long or short, so we coerce neutral to Long when applying.
+          direction: form.direction === 'neutral' ? 'long' : form.direction,
           leverage,
           lower_price: lower,
           upper_price: upper,
@@ -179,11 +181,12 @@ export function BacktestPage() {
               </label>
               <select
                 value={form.direction}
-                onChange={(e) => update('direction', e.target.value as 'long' | 'short')}
+                onChange={(e) => update('direction', e.target.value as FormState['direction'])}
                 className="h-10 px-3 rounded-md bg-bg-surface border border-border-subtle text-sm text-text-primary"
               >
                 <option value="long">{t('backtest.directionLong')}</option>
                 <option value="short">{t('backtest.directionShort')}</option>
+                <option value="neutral">{t('backtest.directionNeutral')}</option>
               </select>
             </div>
             <Input

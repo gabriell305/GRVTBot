@@ -19,6 +19,7 @@ import {
   type BacktestInput,
   type BacktestResult,
   type OrderRow,
+  type PairOption,
   type PortfolioEquityPoint,
   type PortfolioSummary,
   type RangeUpdatePlan,
@@ -111,6 +112,51 @@ export const api = {
   getGridState: (id: number) => request<GridState>(`/bots/${id}/grid-state`),
 
   getInstruments: () => request<{ instruments: unknown[] }>('/instruments'),
+  // Dynamic, up-to-the-second instrument list straight from GRVT market
+  // data. Replaces the static/hardcoded pair list used by the Bot wizard
+  // and Backtest. Falls back to the backend-cached /instruments endpoint
+  // (and finally to an empty list so callers can show a hardcoded stub).
+  getGrvtPairs: async (): Promise<PairOption[]> => {
+    const normalize = (raw: unknown[]): PairOption[] =>
+      (raw ?? [])
+        .map((it: any) =>
+          it?.instrument_id ?? it?.instrument ?? it?.symbol ?? it?.name
+        )
+        .filter(
+          (name: unknown) =>
+            typeof name === 'string' &&
+            (name.toUpperCase().includes('USDT') || name.includes('_Perp'))
+        )
+        .sort()
+        .map((name: string) => ({
+          value: name,
+          label: name.replace(/_/g, '-').replace(/-Perp$/i, '-PERP'),
+        }));
+    try {
+      const resp = await fetch('https://market-data.grvt.io/full/v1/instruments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (resp.ok) {
+        const data: unknown = await resp.json();
+        const list = Array.isArray(data)
+          ? data
+          : Array.isArray((data as any)?.instruments)
+          ? (data as any).instruments
+          : [];
+        if (list.length) return normalize(list);
+      }
+    } catch {
+      /* direct call failed (CORS/offline) -> fall through to backend */
+    }
+    try {
+      const cached = await request<{ instruments: unknown[] }>('/instruments');
+      return normalize(cached?.instruments ?? []);
+    } catch {
+      return [];
+    }
+  },
   getBalance: () => request<{ balance: unknown }>('/balance'),
 
   getTrades: (id: number, opts: { limit?: number } = {}) => {

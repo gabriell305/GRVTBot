@@ -28,7 +28,7 @@ import {
   formatSize,
   formatUsd,
 } from '@/lib/format';
-import type { ValidateBotInput, ValidateBotResult } from '@/lib/api-types';
+import type { PairOption, ValidateBotInput, ValidateBotResult } from '@/lib/api-types';
 import { cn } from '@/lib/cn';
 import { useT } from '@/i18n';
 
@@ -69,13 +69,15 @@ interface WizardState {
   tpPct: string;
   autoShiftEnabled: boolean;
   autoShiftPct: string;
-  // Capas virtuales (0-100 cada una)
-  virtualCoverEnabled: boolean; // Capa 2: Cobertura de volatilidad
-  virtualCoverGrids: string;
-  virtualMacroEnabled: boolean; // Capa 3: Rango amplio
-  virtualMacroGrids: string;
+  // Capas de estrategia de 3 capas de grillas (0-100 cada una)
+  virtualEnabled: boolean;
+  virtualMidGrids: string;    // Grilla Virtual 1: rango medio
+  virtualWideGrids: string;   // Grilla Virtual 2: rango amplio
+  virtualMacroGrids: string;  // Grilla Virtual 3: cobertura macro
   activeWindowSize: string;
   subAccountId: string;
+  // Entorno de ejecución independiente por bot (Mainnet/Testnet).
+  network: 'mainnet' | 'testnet';
 }
 
 const INITIAL_STATE: WizardState = {
@@ -96,12 +98,13 @@ const INITIAL_STATE: WizardState = {
   tpPct: '',
   autoShiftEnabled: false,
   autoShiftPct: '10',
-  virtualCoverEnabled: false,
-  virtualCoverGrids: '0',
-  virtualMacroEnabled: false,
+  virtualEnabled: false,
+  virtualMidGrids: '0',
+  virtualWideGrids: '0',
   virtualMacroGrids: '0',
   activeWindowSize: '70',
   subAccountId: '',
+  network: 'mainnet',
 };
 
 // H.1: hardcoded fallback — used while the API query is loading
@@ -139,10 +142,12 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
   const [validated, setValidated] = useState<ValidateBotResult | null>(null);
   const navigate = useNavigate();
 
-  // H.1: fetch available instruments from GRVT API
-  const instrumentsQuery = useQuery({
-    queryKey: ['instruments'],
-    queryFn: () => api.getInstruments(),
+  // H.1: fetch the full available-instrument list live from GRVT market
+  // data. Falls back to the backend-cached list then a small stub so the
+  // wizard never blocks on a transient API/CORS failure.
+  const pairsQuery = useQuery({
+    queryKey: ['grvt-pairs'],
+    queryFn: () => api.getGrvtPairs(),
     staleTime: 60_000,
     enabled: open,
   });
@@ -155,14 +160,7 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
     enabled: open,
   });
   const subAccounts = subAccountsQuery.data ?? [];
-  const PAIRS = instrumentsQuery.data?.instruments
-    ? (instrumentsQuery.data.instruments as any[])
-        .filter((i: any) => i.instrument?.includes('_Perp') || i.symbol?.includes('_Perp'))
-        .map((i: any) => {
-          const name = i.instrument ?? i.symbol ?? i.name;
-          return { value: name, label: name.replace(/_/g, '-') };
-        })
-    : FALLBACK_PAIRS;
+  const PAIRS: PairOption[] = (pairsQuery.data?.length ?? 0) > 0 ? (pairsQuery.data ?? []) : FALLBACK_PAIRS;
   const queryClient = useQueryClient();
 
   const validateMutation = useMutation({
@@ -219,19 +217,20 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
     const autoShiftPayload = state.autoShiftEnabled
       ? { auto_shift_enabled: true, auto_shift_pct: parseFloat(state.autoShiftPct || '10') }
       : {};
-    // Capas Virtuales (Capa 2 y Capa 3)
-    const virtualCoverPayload = state.virtualCoverEnabled
-      ? {
-          virtual_cover_enabled: true,
-          virtual_cover_grids: Math.min(100, Math.max(0, parseInt(state.virtualCoverGrids || '0', 10))),
-        }
-      : {};
-    const virtualMacroPayload = state.virtualMacroEnabled
-      ? {
-          virtual_macro_enabled: true,
-          virtual_macro_grids: Math.min(100, Math.max(0, parseInt(state.virtualMacroGrids || '0', 10))),
-        }
-      : {};
+    // Estrategia de 3 capas de grillas (reales + 3 virtuales).
+    const vMid = Math.min(100, Math.max(0, parseInt(state.virtualMidGrids || '0', 10)));
+    const vWide = Math.min(100, Math.max(0, parseInt(state.virtualWideGrids || '0', 10)));
+    const vMacro = Math.min(100, Math.max(0, parseInt(state.virtualMacroGrids || '0', 10)));
+    const virtualPayload =
+      state.virtualEnabled && vMid + vWide + vMacro > 0
+        ? {
+            virtual_enabled: true,
+            active_window_size: Math.min(80, Math.max(20, parseInt(state.activeWindowSize || '70', 10) || 70)),
+            virtual_mid_grids: vMid,
+            virtual_wide_grids: vWide,
+            virtual_macro_grids: vMacro,
+          }
+        : {};
     // H.5: thread the picked sub-account through to POST /bots. Empty
     // string in state.subAccountId = use the user's default credentials.
     const subAccountPayload = state.subAccountId
@@ -250,9 +249,10 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
       ...(slPct > 0 ? { sl_pct: slPct } : {}),
       ...(tpPct > 0 ? { tp_pct: tpPct } : {}),
       ...autoShiftPayload,
-      ...virtualCoverPayload,
-      ...virtualMacroPayload,
+      ...virtualPayload,
       ...subAccountPayload,
+      // Per-bot deployment network (mainnet/testnet in parallel).
+      network: state.network,
     } as any);
   }
 
@@ -294,18 +294,18 @@ export function CreateBotWizard({ open, onClose, preset }: CreateBotWizardProps)
               compound_pct: Math.min(100, Math.max(0, parseInt(state.compoundPct || '0', 10))),
             }
           : {}),
-        ...(state.virtualCoverEnabled
+        // 3-layer virtual grid strategy (mirrors the create payload so the
+        // backend can account for the active window when estimating spacing).
+        ...(state.virtualEnabled
           ? {
-              virtual_cover_enabled: true,
-              virtual_cover_grids: Math.min(100, Math.max(0, parseInt(state.virtualCoverGrids || '0', 10))),
-            }
-          : {}),
-        ...(state.virtualMacroEnabled
-          ? {
-              virtual_macro_enabled: true,
+              virtual_enabled: true,
+              active_window_size: Math.min(80, Math.max(20, parseInt(state.activeWindowSize || '70', 10) || 70)),
+              virtual_mid_grids: Math.min(100, Math.max(0, parseInt(state.virtualMidGrids || '0', 10))),
+              virtual_wide_grids: Math.min(100, Math.max(0, parseInt(state.virtualWideGrids || '0', 10))),
               virtual_macro_grids: Math.min(100, Math.max(0, parseInt(state.virtualMacroGrids || '0', 10))),
             }
           : {}),
+        network: state.network,
       } as ValidateBotInput;
       validateMutation.mutate(input);
     }
@@ -726,10 +726,37 @@ function StepConfig({
         )}
       </div>
 
-      {/* Capa 1: Grilla Base / Real DEX (1-100) */}
+      {/* Entorno de ejecución: Mainnet / Testnet (independiente por bot) */}
+      <div className="mt-4 rounded-md border border-border-subtle bg-bg-muted/40 p-4">
+        <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
+          {t('wizard.networkTitle')}
+        </h4>
+        <div className="flex gap-2">
+          {(['mainnet', 'testnet'] as const).map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => update('network', n)}
+              className={cn(
+                'flex-1 h-10 rounded-md border text-sm font-semibold uppercase tracking-wider',
+                state.network === n
+                  ? n === 'mainnet'
+                    ? 'border-primary bg-primary-soft text-primary'
+                    : 'border-warning bg-warning-soft text-warning'
+                  : 'border-border-subtle text-text-muted hover:border-border-default'
+              )}
+            >
+              {n === 'mainnet' ? t('wizard.networkMainnet') : t('wizard.networkTestnet')}
+            </button>
+          ))}
+        </div>
+        <p className="text-2xs text-text-muted mt-1">{t('wizard.networkHelp')}</p>
+      </div>
+
+      {/* Capa Real: Grillas Reales (ventana en el libro de órdenes) */}
       <div className="mt-4 rounded-md border border-border-subtle bg-bg-muted/40 p-4">
         <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-          {t('wizard.layer1Title')}
+          {t('wizard.layerTitle')}
         </h4>
         <Input
           label={t('wizard.realGrids')}
@@ -737,69 +764,53 @@ function StepConfig({
           inputMode="numeric"
           value={state.grids}
           onChange={(e) => update('grids', e.target.value)}
-          helper="1 – 100 grillas reales en el orderbook"
+          helper={t('wizard.realGridsHelper')}
         />
       </div>
 
-      {/* Capa 2: Grilla Virtual Cobertura (0-100) */}
+      {/* Estrategia de 3 capas de grillas virtuales */}
       <div className="mt-4 rounded-md border border-border-subtle bg-bg-muted/40 p-4">
         <label className="flex items-start gap-3 cursor-pointer">
           <input
             type="checkbox"
             className="mt-0.5 size-4 accent-primary"
-            checked={state.virtualCoverEnabled}
-            onChange={(e) => update('virtualCoverEnabled', e.target.checked)}
+            checked={state.virtualEnabled}
+            onChange={(e) => update('virtualEnabled', e.target.checked)}
           />
           <div className="flex-1">
             <div className="text-sm font-semibold text-text-primary">
-              {t('wizard.layer2Title')}
+              {t('wizard.virtualMaster')}
             </div>
             <div className="text-xs text-text-muted mt-0.5">
-              {t('wizard.layer2Desc')}
+              {t('wizard.virtualMasterDesc')}
             </div>
           </div>
         </label>
-        {state.virtualCoverEnabled && (
-          <div className="mt-3 pl-7">
+        {state.virtualEnabled && (
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 pl-7">
             <Input
-              label={t('wizard.virtualCoverGrids')}
+              label={t('wizard.virtualMid')}
               numeric
               inputMode="numeric"
-              value={state.virtualCoverGrids}
-              onChange={(e) => update('virtualCoverGrids', e.target.value)}
-              helper="0 – 100 grillas virtuales de cobertura"
+              value={state.virtualMidGrids}
+              onChange={(e) => update('virtualMidGrids', e.target.value)}
+              helper="0 – 100"
             />
-          </div>
-        )}
-      </div>
-
-      {/* Capa 3: Grilla Virtual Macro (0-100) */}
-      <div className="mt-4 rounded-md border border-border-subtle bg-bg-muted/40 p-4">
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            className="mt-0.5 size-4 accent-primary"
-            checked={state.virtualMacroEnabled}
-            onChange={(e) => update('virtualMacroEnabled', e.target.checked)}
-          />
-          <div className="flex-1">
-            <div className="text-sm font-semibold text-text-primary">
-              {t('wizard.layer3Title')}
-            </div>
-            <div className="text-xs text-text-muted mt-0.5">
-              {t('wizard.layer3Desc')}
-            </div>
-          </div>
-        </label>
-        {state.virtualMacroEnabled && (
-          <div className="mt-3 pl-7">
+            <Input
+              label={t('wizard.virtualWide')}
+              numeric
+              inputMode="numeric"
+              value={state.virtualWideGrids}
+              onChange={(e) => update('virtualWideGrids', e.target.value)}
+              helper="0 – 100"
+            />
             <Input
               label={t('wizard.virtualMacroGrids')}
               numeric
               inputMode="numeric"
               value={state.virtualMacroGrids}
               onChange={(e) => update('virtualMacroGrids', e.target.value)}
-              helper="0 – 100 grillas virtuales de rango amplio"
+              helper="0 – 100"
             />
           </div>
         )}
@@ -808,7 +819,7 @@ function StepConfig({
         {t('wizard.effectiveNotional')}{' '}
         <Mono className="text-text-secondary">
           {formatUsd(
-            parseFloat(state.investment || '0') * parseInt(state.leverage || '0', 10)
+            parseFloat(state.investment) * parseInt(state.leverage, 10)
           )}
         </Mono>
         {t('wizard.effectiveNotionalEnd')}

@@ -31,6 +31,13 @@ export interface GridConfig {
   // H.5: route this bot through a specific sub-account. NULL/undefined
   // = use the user's default credentials in grvt_credentials.
   grvtSubAccountId?: number | null;
+  // Deployment network target. Stored per-bot so the dashboard can run
+  // Mainnet and Testnet bots side by side. Persisted via params_json.
+  network?: 'mainnet' | 'testnet';
+  // Arbitrary extra params the dashboard wants persisted (e.g. the
+  // 3-layer virtual grid strategy counts). Merged into params_json so
+  // the DB schema stays untouched.
+  paramsJson?: Record<string, unknown>;
 }
 
 export interface GridCalculation {
